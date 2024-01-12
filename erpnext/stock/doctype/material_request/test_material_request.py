@@ -9,6 +9,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import flt, today
 
+from erpnext.controllers.accounts_controller import InvalidQtyError
 from erpnext.stock.doctype.item.test_item import create_item
 from erpnext.stock.doctype.material_request.material_request import (
 	make_in_transit_stock_entry,
@@ -20,6 +21,17 @@ from erpnext.stock.doctype.material_request.material_request import (
 
 
 class TestMaterialRequest(FrappeTestCase):
+	def test_material_request_qty(self):
+		mr = frappe.copy_doc(test_records[0])
+		mr.items[0].qty = 0
+		with self.assertRaises(InvalidQtyError):
+			mr.insert()
+
+		# No error with qty=1
+		mr.items[0].qty = 1
+		mr.save()
+		self.assertEqual(mr.items[0].qty, 1)
+
 	def test_make_purchase_order(self):
 		mr = frappe.copy_doc(test_records[0]).insert()
 
@@ -54,6 +66,8 @@ class TestMaterialRequest(FrappeTestCase):
 		mr.submit()
 		se = make_stock_entry(mr.name)
 
+		self.assertEqual(se.stock_entry_type, "Material Transfer")
+		self.assertEqual(se.purpose, "Material Transfer")
 		self.assertEqual(se.doctype, "Stock Entry")
 		self.assertEqual(len(se.get("items")), len(mr.get("items")))
 
@@ -69,6 +83,8 @@ class TestMaterialRequest(FrappeTestCase):
 		in_transit_warehouse = get_in_transit_warehouse(mr.company)
 		se = make_in_transit_stock_entry(mr.name, in_transit_warehouse)
 
+		self.assertEqual(se.stock_entry_type, "Material Transfer")
+		self.assertEqual(se.purpose, "Material Transfer")
 		self.assertEqual(se.doctype, "Stock Entry")
 		for row in se.get("items"):
 			self.assertEqual(row.t_warehouse, in_transit_warehouse)
@@ -396,7 +412,7 @@ class TestMaterialRequest(FrappeTestCase):
 		mr.insert()
 		mr.submit()
 
-		frappe.db.set_value("Stock Settings", None, "mr_qty_allowance", 20)
+		frappe.db.set_single_value("Stock Settings", "mr_qty_allowance", 20)
 
 		# map a stock entry
 

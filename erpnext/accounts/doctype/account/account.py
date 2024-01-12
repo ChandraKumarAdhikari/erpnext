@@ -18,7 +18,70 @@ class BalanceMismatchError(frappe.ValidationError):
 	pass
 
 
+class InvalidAccountMergeError(frappe.ValidationError):
+	pass
+
+
 class Account(NestedSet):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		account_currency: DF.Link | None
+		account_name: DF.Data
+		account_number: DF.Data | None
+		account_type: DF.Literal[
+			"",
+			"Accumulated Depreciation",
+			"Asset Received But Not Billed",
+			"Bank",
+			"Cash",
+			"Chargeable",
+			"Capital Work in Progress",
+			"Cost of Goods Sold",
+			"Current Asset",
+			"Current Liability",
+			"Depreciation",
+			"Direct Expense",
+			"Direct Income",
+			"Equity",
+			"Expense Account",
+			"Expenses Included In Asset Valuation",
+			"Expenses Included In Valuation",
+			"Fixed Asset",
+			"Income Account",
+			"Indirect Expense",
+			"Indirect Income",
+			"Liability",
+			"Payable",
+			"Receivable",
+			"Round Off",
+			"Stock",
+			"Stock Adjustment",
+			"Stock Received But Not Billed",
+			"Service Received But Not Billed",
+			"Tax",
+			"Temporary",
+		]
+		balance_must_be: DF.Literal["", "Debit", "Credit"]
+		company: DF.Link
+		disabled: DF.Check
+		freeze_account: DF.Literal["No", "Yes"]
+		include_in_gross: DF.Check
+		is_group: DF.Check
+		lft: DF.Int
+		old_parent: DF.Data | None
+		parent_account: DF.Link
+		report_type: DF.Literal["", "Balance Sheet", "Profit and Loss"]
+		rgt: DF.Int
+		root_type: DF.Literal["", "Asset", "Liability", "Income", "Expense", "Equity"]
+		tax_rate: DF.Float
+	# end: auto-generated types
+
 	nsm_parent_field = "parent_account"
 
 	def on_update(self):
@@ -28,8 +91,8 @@ class Account(NestedSet):
 			super(Account, self).on_update()
 
 	def onload(self):
-		frozen_accounts_modifier = frappe.db.get_value(
-			"Accounts Settings", "Accounts Settings", "frozen_accounts_modifier"
+		frozen_accounts_modifier = frappe.db.get_single_value(
+			"Accounts Settings", "frozen_accounts_modifier"
 		)
 		if not frozen_accounts_modifier or frozen_accounts_modifier in frappe.get_roles():
 			self.set_onload("can_freeze_account", True)
@@ -45,6 +108,7 @@ class Account(NestedSet):
 		if frappe.local.flags.allow_unverified_charts:
 			return
 		self.validate_parent()
+		self.validate_parent_child_account_type()
 		self.validate_root_details()
 		validate_field_number("Account", self.name, self.account_number, self.company, "account_number")
 		self.validate_group_or_ledger()
@@ -54,6 +118,20 @@ class Account(NestedSet):
 		self.validate_balance_must_be_debit_or_credit()
 		self.validate_account_currency()
 		self.validate_root_company_and_sync_account_to_children()
+
+	def validate_parent_child_account_type(self):
+		if self.parent_account:
+			if self.account_type in [
+				"Direct Income",
+				"Indirect Income",
+				"Current Asset",
+				"Current Liability",
+				"Direct Expense",
+				"Indirect Expense",
+			]:
+				parent_account_type = frappe.db.get_value("Account", self.parent_account, ["account_type"])
+				if parent_account_type == self.account_type:
+					throw(_("Only Parent can be of type {0}").format(self.account_type))
 
 	def validate_parent(self):
 		"""Fetch Parent Details and validate parent account"""
@@ -204,8 +282,11 @@ class Account(NestedSet):
 				)
 
 	def validate_account_currency(self):
+		self.currency_explicitly_specified = True
+
 		if not self.account_currency:
 			self.account_currency = frappe.get_cached_value("Company", self.company, "default_currency")
+			self.currency_explicitly_specified = False
 
 		gl_currency = frappe.db.get_value("GL Entry", {"account": self.name}, "account_currency")
 
@@ -251,8 +332,10 @@ class Account(NestedSet):
 					{
 						"company": company,
 						# parent account's currency should be passed down to child account's curreny
-						# if it is None, it picks it up from default company currency, which might be unintended
-						"account_currency": erpnext.get_company_currency(company),
+						# if currency explicitly specified by user, child will inherit. else, default currency will be used.
+						"account_currency": self.account_currency
+						if self.currency_explicitly_specified
+						else erpnext.get_company_currency(company),
 						"parent_account": parent_acc_name_map[company],
 					}
 				)
@@ -440,25 +523,34 @@ def update_account_number(name, account_name, account_number=None, from_descenda
 
 
 @frappe.whitelist()
-def merge_account(old, new, is_group, root_type, company):
+def merge_account(old, new):
 	# Validate properties before merging
 	new_account = frappe.get_cached_doc("Account", new)
+	old_account = frappe.get_cached_doc("Account", old)
 
 	if not new_account:
 		throw(_("Account {0} does not exist").format(new))
 
-	if (new_account.is_group, new_account.root_type, new_account.company) != (
-		cint(is_group),
-		root_type,
-		company,
+	if (
+		cint(new_account.is_group),
+		new_account.root_type,
+		new_account.company,
+		cstr(new_account.account_currency),
+	) != (
+		cint(old_account.is_group),
+		old_account.root_type,
+		old_account.company,
+		cstr(old_account.account_currency),
 	):
 		throw(
-			_(
-				"""Merging is only possible if following properties are same in both records. Is Group, Root Type, Company"""
-			)
+			msg=_(
+				"""Merging is only possible if following properties are same in both records. Is Group, Root Type, Company and Account Currency"""
+			),
+			title=("Invalid Accounts"),
+			exc=InvalidAccountMergeError,
 		)
 
-	if is_group and new_account.parent_account == old:
+	if old_account.is_group and new_account.parent_account == old:
 		new_account.db_set("parent_account", frappe.get_cached_value("Account", old, "parent_account"))
 
 	frappe.rename_doc("Account", old, new, merge=1, force=1)

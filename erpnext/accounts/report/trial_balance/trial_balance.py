@@ -17,6 +17,7 @@ from erpnext.accounts.report.financial_statements import (
 	filter_out_zero_value_rows,
 	set_gl_entries_by_account,
 )
+from erpnext.accounts.report.utils import convert_to_presentation_currency, get_currency
 
 value_fields = (
 	"opening_debit",
@@ -116,9 +117,12 @@ def get_data(filters):
 		filters,
 		gl_entries_by_account,
 		ignore_closing_entries=not flt(filters.with_period_closing_entry),
+		ignore_opening_entries=True,
 	)
 
-	calculate_values(accounts, gl_entries_by_account, opening_balances)
+	calculate_values(
+		accounts, gl_entries_by_account, opening_balances, filters.get("show_net_values")
+	)
 	accumulate_values_into_parents(accounts, accounts_by_name)
 
 	data = prepare_data(accounts, filters, parent_children_map, company_currency)
@@ -140,13 +144,19 @@ def get_opening_balances(filters):
 def get_rootwise_opening_balances(filters, report_type):
 	gle = []
 
-	last_period_closing_voucher = frappe.db.get_all(
-		"Period Closing Voucher",
-		filters={"docstatus": 1, "company": filters.company, "posting_date": ("<", filters.from_date)},
-		fields=["posting_date", "name"],
-		order_by="posting_date desc",
-		limit=1,
+	last_period_closing_voucher = ""
+	ignore_closing_balances = frappe.db.get_single_value(
+		"Accounts Settings", "ignore_account_closing_balance"
 	)
+
+	if not ignore_closing_balances:
+		last_period_closing_voucher = frappe.db.get_all(
+			"Period Closing Voucher",
+			filters={"docstatus": 1, "company": filters.company, "posting_date": ("<", filters.from_date)},
+			fields=["posting_date", "name"],
+			order_by="posting_date desc",
+			limit=1,
+		)
 
 	accounting_dimensions = get_accounting_dimensions(as_list=False)
 
@@ -158,6 +168,8 @@ def get_rootwise_opening_balances(filters, report_type):
 			accounting_dimensions,
 			period_closing_voucher=last_period_closing_voucher[0].name,
 		)
+
+		# Report getting generate from the mid of a fiscal year
 		if getdate(last_period_closing_voucher[0].posting_date) < getdate(
 			add_days(filters.from_date, -1)
 		):
@@ -178,8 +190,8 @@ def get_rootwise_opening_balances(filters, report_type):
 				"opening_credit": 0.0,
 			},
 		)
-		opening[d.account]["opening_debit"] += flt(d.opening_debit)
-		opening[d.account]["opening_credit"] += flt(d.opening_credit)
+		opening[d.account]["opening_debit"] += flt(d.debit)
+		opening[d.account]["opening_credit"] += flt(d.credit)
 
 	return opening
 
@@ -194,8 +206,11 @@ def get_opening_balance(
 		frappe.qb.from_(closing_balance)
 		.select(
 			closing_balance.account,
-			Sum(closing_balance.debit).as_("opening_debit"),
-			Sum(closing_balance.credit).as_("opening_credit"),
+			closing_balance.account_currency,
+			Sum(closing_balance.debit).as_("debit"),
+			Sum(closing_balance.credit).as_("credit"),
+			Sum(closing_balance.debit_in_account_currency).as_("debit_in_account_currency"),
+			Sum(closing_balance.credit_in_account_currency).as_("credit_in_account_currency"),
 		)
 		.where(
 			(closing_balance.company == filters.company)
@@ -214,9 +229,18 @@ def get_opening_balance(
 		)
 	else:
 		if start_date:
-			opening_balance = opening_balance.where(closing_balance.posting_date >= start_date)
+			opening_balance = opening_balance.where(
+				(closing_balance.posting_date >= start_date)
+				& (closing_balance.posting_date < filters.from_date)
+			)
 			opening_balance = opening_balance.where(closing_balance.is_opening == "No")
-		opening_balance = opening_balance.where(closing_balance.posting_date < filters.from_date)
+		else:
+			opening_balance = opening_balance.where(
+				(closing_balance.posting_date < filters.from_date) | (closing_balance.is_opening == "Yes")
+			)
+
+	if doctype == "GL Entry":
+		opening_balance = opening_balance.where(closing_balance.is_cancelled == 0)
 
 	if (
 		not filters.show_unclosed_fy_pl_balances
@@ -237,7 +261,7 @@ def get_opening_balance(
 		lft, rgt = frappe.db.get_value("Cost Center", filters.cost_center, ["lft", "rgt"])
 		cost_center = frappe.qb.DocType("Cost Center")
 		opening_balance = opening_balance.where(
-			closing_balance.cost_center.in_(
+			closing_balance.cost_center.isin(
 				frappe.qb.from_(cost_center)
 				.select("name")
 				.where((cost_center.lft >= lft) & (cost_center.rgt <= rgt))
@@ -248,8 +272,13 @@ def get_opening_balance(
 		opening_balance = opening_balance.where(closing_balance.project == filters.project)
 
 	if filters.get("include_default_book_entries"):
+		company_fb = frappe.get_cached_value("Company", filters.company, "default_finance_book")
+
+		if filters.finance_book and company_fb and cstr(filters.finance_book) != cstr(company_fb):
+			frappe.throw(_("To use a different finance book, please uncheck 'Include Default FB Entries'"))
+
 		opening_balance = opening_balance.where(
-			(closing_balance.finance_book.isin([cstr(filters.finance_book), cstr(filters.company_fb), ""]))
+			(closing_balance.finance_book.isin([cstr(filters.finance_book), cstr(company_fb), ""]))
 			| (closing_balance.finance_book.isnull())
 		)
 	else:
@@ -275,10 +304,13 @@ def get_opening_balance(
 
 	gle = opening_balance.run(as_dict=1)
 
+	if filters and filters.get("presentation_currency"):
+		convert_to_presentation_currency(gle, get_currency(filters))
+
 	return gle
 
 
-def calculate_values(accounts, gl_entries_by_account, opening_balances):
+def calculate_values(accounts, gl_entries_by_account, opening_balances, show_net_values):
 	init = {
 		"opening_debit": 0.0,
 		"opening_credit": 0.0,
@@ -303,7 +335,8 @@ def calculate_values(accounts, gl_entries_by_account, opening_balances):
 		d["closing_debit"] = d["opening_debit"] + d["debit"]
 		d["closing_credit"] = d["opening_credit"] + d["credit"]
 
-		prepare_opening_closing(d)
+		if show_net_values:
+			prepare_opening_closing(d)
 
 
 def calculate_total_row(accounts, company_currency):
@@ -343,7 +376,7 @@ def prepare_data(accounts, filters, parent_children_map, company_currency):
 
 	for d in accounts:
 		# Prepare opening closing for group account
-		if parent_children_map.get(d.account):
+		if parent_children_map.get(d.account) and filters.get("show_net_values"):
 			prepare_opening_closing(d)
 
 		has_value = False

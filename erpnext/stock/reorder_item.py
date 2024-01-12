@@ -18,7 +18,7 @@ def reorder_item():
 	if not (frappe.db.a_row_exists("Company") and frappe.db.a_row_exists("Fiscal Year")):
 		return
 
-	if cint(frappe.db.get_value("Stock Settings", None, "auto_indent")):
+	if cint(frappe.db.get_single_value("Stock Settings", "auto_indent")):
 		return _reorder_item()
 
 
@@ -67,7 +67,7 @@ def _reorder_item():
 		else:
 			projected_qty = flt(item_warehouse_projected_qty.get(item_code, {}).get(warehouse))
 
-		if (reorder_level or reorder_qty) and projected_qty < reorder_level:
+		if (reorder_level or reorder_qty) and projected_qty <= reorder_level:
 			deficiency = reorder_level - projected_qty
 			if deficiency > reorder_qty:
 				reorder_qty = deficiency
@@ -141,7 +141,7 @@ def create_material_request(material_requests):
 			exceptions_list.extend(frappe.local.message_log)
 			frappe.local.message_log = []
 		else:
-			exceptions_list.append(frappe.get_traceback())
+			exceptions_list.append(frappe.get_traceback(with_context=True))
 
 		mr.log_error("Unable to create material request")
 
@@ -212,7 +212,7 @@ def create_material_request(material_requests):
 	if mr_list:
 		if getattr(frappe.local, "reorder_email_notify", None) is None:
 			frappe.local.reorder_email_notify = cint(
-				frappe.db.get_value("Stock Settings", None, "reorder_email_notify")
+				frappe.db.get_single_value("Stock Settings", "reorder_email_notify")
 			)
 
 		if frappe.local.reorder_email_notify:

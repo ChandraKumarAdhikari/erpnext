@@ -8,7 +8,17 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, add_months, cint, cstr, flt, formatdate, get_first_day, getdate
+from frappe.utils import (
+	add_days,
+	add_months,
+	cint,
+	cstr,
+	flt,
+	formatdate,
+	get_first_day,
+	getdate,
+	today,
+)
 
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
 	get_accounting_dimensions,
@@ -42,6 +52,8 @@ def get_period_list(
 		validate_dates(period_start_date, period_end_date)
 		year_start_date = getdate(period_start_date)
 		year_end_date = getdate(period_end_date)
+
+	year_end_date = getdate(today()) if year_end_date > getdate(today()) else year_end_date
 
 	months_to_add = {"Yearly": 12, "Half-Yearly": 6, "Quarterly": 3, "Monthly": 1}[periodicity]
 
@@ -188,6 +200,7 @@ def get_data(
 			filters,
 			gl_entries_by_account,
 			ignore_closing_entries=ignore_closing_entries,
+			root_type=root_type,
 		)
 
 	calculate_values(
@@ -198,7 +211,13 @@ def get_data(
 		ignore_accumulated_values_for_fy,
 	)
 	accumulate_values_into_parents(accounts, accounts_by_name, period_list)
-	out = prepare_data(accounts, balance_must_be, period_list, company_currency)
+	out = prepare_data(
+		accounts,
+		balance_must_be,
+		period_list,
+		company_currency,
+		accumulated_values=filters.accumulated_values,
+	)
 	out = filter_out_zero_value_rows(out, parent_children_map)
 
 	if out and total:
@@ -257,7 +276,7 @@ def accumulate_values_into_parents(accounts, accounts_by_name, period_list):
 			) + d.get("opening_balance", 0.0)
 
 
-def prepare_data(accounts, balance_must_be, period_list, company_currency):
+def prepare_data(accounts, balance_must_be, period_list, company_currency, accumulated_values):
 	data = []
 	year_start_date = period_list[0]["year_start_date"].strftime("%Y-%m-%d")
 	year_end_date = period_list[-1]["year_end_date"].strftime("%Y-%m-%d")
@@ -297,8 +316,14 @@ def prepare_data(accounts, balance_must_be, period_list, company_currency):
 				has_value = True
 				total += flt(row[period.key])
 
-		row["has_value"] = has_value
-		row["total"] = total
+		if accumulated_values:
+			# when 'accumulated_values' is enabled, periods have running balance.
+			# so, last period will have the net amount.
+			row["has_value"] = has_value
+			row["total"] = flt(d.get(period_list[-1].key, 0.0), 3)
+		else:
+			row["has_value"] = has_value
+			row["total"] = total
 		data.append(row)
 
 	return data
@@ -334,12 +359,10 @@ def add_total_row(out, root_type, balance_must_be, period_list, company_currency
 			for period in period_list:
 				total_row.setdefault(period.key, 0.0)
 				total_row[period.key] += row.get(period.key, 0.0)
-				row[period.key] = row.get(period.key, 0.0)
 
 			total_row.setdefault("total", 0.0)
 			total_row["total"] += flt(row["total"])
 			total_row["opening_balance"] += row["opening_balance"]
-			row["total"] = ""
 
 	if "total" in total_row:
 		out.append(total_row)
@@ -416,24 +439,45 @@ def set_gl_entries_by_account(
 	filters,
 	gl_entries_by_account,
 	ignore_closing_entries=False,
+	ignore_opening_entries=False,
+	root_type=None,
 ):
 	"""Returns a dict like { "account": [gl entries], ... }"""
 	gl_entries = []
 
+	account_filters = {
+		"company": company,
+		"is_group": 0,
+		"lft": (">=", root_lft),
+		"rgt": ("<=", root_rgt),
+	}
+
+	if root_type:
+		account_filters.update(
+			{
+				"root_type": root_type,
+			}
+		)
+
 	accounts_list = frappe.db.get_all(
 		"Account",
-		filters={"company": company, "is_group": 0, "lft": (">=", root_lft), "rgt": ("<=", root_rgt)},
+		filters=account_filters,
 		pluck="name",
 	)
 
-	ignore_opening_entries = False
 	if accounts_list:
 		# For balance sheet
-		if not from_date:
-			from_date = filters["period_start_date"]
+		ignore_closing_balances = frappe.db.get_single_value(
+			"Accounts Settings", "ignore_account_closing_balance"
+		)
+		if not from_date and not ignore_closing_balances:
 			last_period_closing_voucher = frappe.db.get_all(
 				"Period Closing Voucher",
-				filters={"docstatus": 1, "company": filters.company, "posting_date": ("<", from_date)},
+				filters={
+					"docstatus": 1,
+					"company": filters.company,
+					"posting_date": ("<", filters["period_start_date"]),
+				},
 				fields=["posting_date", "name"],
 				order_by="posting_date desc",
 				limit=1,
@@ -462,7 +506,7 @@ def set_gl_entries_by_account(
 		)
 
 		if filters and filters.get("presentation_currency"):
-			convert_to_presentation_currency(gl_entries, get_currency(filters), filters.get("company"))
+			convert_to_presentation_currency(gl_entries, get_currency(filters))
 
 		for entry in gl_entries:
 			gl_entries_by_account.setdefault(entry.account, []).append(entry)
@@ -538,13 +582,19 @@ def apply_additional_conditions(doctype, query, from_date, ignore_closing_entrie
 			query = query.where(gl_entry.cost_center.isin(filters.cost_center))
 
 		if filters.get("include_default_book_entries"):
+			company_fb = frappe.get_cached_value("Company", filters.company, "default_finance_book")
+
+			if filters.finance_book and company_fb and cstr(filters.finance_book) != cstr(company_fb):
+				frappe.throw(_("To use a different finance book, please uncheck 'Include Default FB Entries'"))
+
 			query = query.where(
-				(gl_entry.finance_book.isin([cstr(filters.finance_book), cstr(filters.company_fb), ""]))
+				(gl_entry.finance_book.isin([cstr(filters.finance_book), cstr(company_fb), ""]))
 				| (gl_entry.finance_book.isnull())
 			)
 		else:
 			query = query.where(
-				(gl_entry.finance_book.isin([cstr(filters.company_fb), ""])) | (gl_entry.finance_book.isnull())
+				(gl_entry.finance_book.isin([cstr(filters.finance_book), ""]))
+				| (gl_entry.finance_book.isnull())
 			)
 
 	if accounting_dimensions:
@@ -609,7 +659,13 @@ def get_columns(periodicity, period_list, accumulated_values=1, company=None):
 	if periodicity != "Yearly":
 		if not accumulated_values:
 			columns.append(
-				{"fieldname": "total", "label": _("Total"), "fieldtype": "Currency", "width": 150}
+				{
+					"fieldname": "total",
+					"label": _("Total"),
+					"fieldtype": "Currency",
+					"width": 150,
+					"options": "currency",
+				}
 			)
 
 	return columns

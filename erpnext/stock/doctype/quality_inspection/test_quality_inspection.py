@@ -167,13 +167,13 @@ class TestQualityInspection(FrappeTestCase):
 			reference_type="Stock Entry", reference_name=se.name, readings=readings, status="Rejected"
 		)
 
-		frappe.db.set_value("Stock Settings", None, "action_if_quality_inspection_is_rejected", "Stop")
+		frappe.db.set_single_value("Stock Settings", "action_if_quality_inspection_is_rejected", "Stop")
 		se.reload()
 		self.assertRaises(
 			QualityInspectionRejectedError, se.submit
 		)  # when blocked in Stock settings, block rejected QI
 
-		frappe.db.set_value("Stock Settings", None, "action_if_quality_inspection_is_rejected", "Warn")
+		frappe.db.set_single_value("Stock Settings", "action_if_quality_inspection_is_rejected", "Warn")
 		se.reload()
 		se.submit()  # when allowed in Stock settings, allow rejected QI
 
@@ -182,7 +182,7 @@ class TestQualityInspection(FrappeTestCase):
 		qa.cancel()
 		se.reload()
 		se.cancel()
-		frappe.db.set_value("Stock Settings", None, "action_if_quality_inspection_is_rejected", "Stop")
+		frappe.db.set_single_value("Stock Settings", "action_if_quality_inspection_is_rejected", "Stop")
 
 	def test_qi_status(self):
 		make_stock_entry(
@@ -249,6 +249,33 @@ class TestQualityInspection(FrappeTestCase):
 
 		qa.delete()
 		dn.delete()
+
+	def test_delete_quality_inspection_linked_with_stock_entry(self):
+		item_code = create_item("_Test Cicuular Dependecy Item with QA").name
+
+		se = make_stock_entry(
+			item_code=item_code, target="_Test Warehouse - _TC", qty=1, basic_rate=100, do_not_submit=True
+		)
+
+		se.inspection_required = 1
+		se.save()
+
+		qa = create_quality_inspection(
+			item_code=item_code, reference_type="Stock Entry", reference_name=se.name, do_not_submit=True
+		)
+
+		se.reload()
+		se.items[0].quality_inspection = qa.name
+		se.save()
+
+		qa.delete()
+
+		se.reload()
+
+		qc = se.items[0].quality_inspection
+		self.assertFalse(qc)
+
+		se.delete()
 
 
 def create_quality_inspection(**args):

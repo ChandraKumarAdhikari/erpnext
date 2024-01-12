@@ -157,9 +157,14 @@
 	},
 
 	"Botswana": {
-		"Botswana Tax": {
+		"Botswana Tax 14%": {
 			"account_name": "VAT",
-			"tax_rate": 12.00
+			"tax_rate": 14.00
+		},
+		"Botswana Tax 12%": {
+			"account_name": "VAT",
+			"tax_rate": 12.00,
+			"default": 1
 		}
 	},
 
@@ -579,6 +584,11 @@
 					},
 					{
 						"title": "Bauleistungen nach § 13b UStG",
+						"is_default": 0,
+						"taxes": []
+					},
+					{
+						"title": "Nullsteuersatz nach § 12 Abs. 3 UStG",
 						"is_default": 0,
 						"taxes": []
 					}
@@ -1339,6 +1349,11 @@
 						"title": "Bauleistungen nach § 13b UStG",
 						"is_default": 0,
 						"taxes": []
+					},
+					{
+						"title": "Nullsteuersatz nach § 12 Abs. 3 UStG",
+						"is_default": 0,
+						"taxes": []
 					}
 				],
 				"purchase_tax_templates": [
@@ -2097,6 +2112,11 @@
 						"title": "Bauleistungen nach § 13b UStG",
 						"is_default": 0,
 						"taxes": []
+					},
+					{
+						"title": "Nullsteuersatz nach § 12 Abs. 3 UStG",
+						"is_default": 0,
+						"taxes": []
 					}
 				],
 				"purchase_tax_templates": [
@@ -2847,6 +2867,11 @@
 					},
 					{
 						"title": "Bauleistungen nach § 13b UStG",
+						"is_default": 0,
+						"taxes": []
+					},
+					{
+						"title": "Nullsteuersatz nach § 12 Abs. 3 UStG",
 						"is_default": 0,
 						"taxes": []
 					}

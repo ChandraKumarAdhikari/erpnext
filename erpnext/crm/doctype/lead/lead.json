@@ -2,6 +2,7 @@
  "actions": [],
  "allow_events_in_timeline": 1,
  "allow_import": 1,
+ "allow_rename": 1,
  "autoname": "naming_series:",
  "creation": "2022-02-08 13:14:41.083327",
  "doctype": "DocType",
@@ -515,7 +516,7 @@
  "idx": 5,
  "image_field": "image",
  "links": [],
- "modified": "2023-01-24 18:20:05.044791",
+ "modified": "2023-12-01 18:46:49.468526",
  "modified_by": "Administrator",
  "module": "CRM",
  "name": "Lead",
@@ -526,7 +527,7 @@
    "permlevel": 1,
    "read": 1,
    "report": 1,
-   "role": "All"
+   "role": "Desk User"
   },
   {
    "create": 1,
@@ -576,6 +577,7 @@
  ],
  "search_fields": "lead_name,lead_owner,status",
  "sender_field": "email_id",
+ "sender_name_field": "lead_name",
  "show_name_in_global_search": 1,
  "sort_field": "modified",
  "sort_order": "DESC",

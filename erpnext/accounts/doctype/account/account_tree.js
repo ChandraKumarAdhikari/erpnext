@@ -77,7 +77,7 @@ frappe.treeview_settings["Account"] = {
 
 						// show Dr if positive since balance is calculated as debit - credit else show Cr
 						const balance = account.balance_in_account_currency || account.balance;
-						const dr_or_cr = balance > 0 ? "Dr": "Cr";
+						const dr_or_cr = balance > 0 ? __("Dr"): __("Cr");
 						const format = (value, currency) => format_currency(Math.abs(value), currency);
 
 						if (account.balance!==undefined) {
@@ -194,8 +194,8 @@ frappe.treeview_settings["Account"] = {
 			click: function(node, btn) {
 				frappe.route_options = {
 					"account": node.label,
-					"from_date": frappe.sys_defaults.year_start_date,
-					"to_date": frappe.sys_defaults.year_end_date,
+					"from_date": erpnext.utils.get_fiscal_year(frappe.datetime.get_today(), true)[1],
+					"to_date": erpnext.utils.get_fiscal_year(frappe.datetime.get_today(), true)[2],
 					"company": frappe.treeview_settings['Account'].treeview.page.fields_dict.company.get_value()
 				};
 				frappe.set_route("query-report", "General Ledger");

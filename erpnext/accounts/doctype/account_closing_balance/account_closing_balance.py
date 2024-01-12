@@ -11,13 +11,34 @@ from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
 
 
 class AccountClosingBalance(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		account: DF.Link | None
+		account_currency: DF.Link | None
+		closing_date: DF.Date | None
+		company: DF.Link | None
+		cost_center: DF.Link | None
+		credit: DF.Currency
+		credit_in_account_currency: DF.Currency
+		debit: DF.Currency
+		debit_in_account_currency: DF.Currency
+		finance_book: DF.Link | None
+		is_period_closing_voucher_entry: DF.Check
+		period_closing_voucher: DF.Link | None
+		project: DF.Link | None
+	# end: auto-generated types
+
 	pass
 
 
-def make_closing_entries(closing_entries, voucher_name):
+def make_closing_entries(closing_entries, voucher_name, company, closing_date):
 	accounting_dimensions = get_accounting_dimensions()
-	company = closing_entries[0].get("company")
-	closing_date = closing_entries[0].get("closing_date")
 
 	previous_closing_entries = get_previous_closing_entries(
 		company, closing_date, accounting_dimensions
@@ -38,6 +59,8 @@ def make_closing_entries(closing_entries, voucher_name):
 				"closing_date": closing_date,
 			}
 		)
+		cle.flags.ignore_permissions = True
+		cle.flags.ignore_links = True
 		cle.submit()
 
 

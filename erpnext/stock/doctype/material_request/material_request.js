@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line
 frappe.provide("erpnext.accounts.dimensions");
-{% include 'erpnext/public/js/controllers/buying.js' %};
+erpnext.buying.setup_buying_controller();
 
 frappe.ui.form.on('Material Request', {
 	setup: function(frm) {
@@ -102,6 +102,12 @@ frappe.ui.form.on('Material Request', {
 
 		if (frm.doc.docstatus == 1 && frm.doc.status != 'Stopped') {
 			let precision = frappe.defaults.get_default("float_precision");
+
+			if (flt(frm.doc.per_received, precision) < 100) {
+				frm.add_custom_button(__('Stop'),
+					() => frm.events.update_status(frm, 'Stopped'));
+			}
+
 			if (flt(frm.doc.per_ordered, precision) < 100) {
 				let add_create_pick_list_button = () => {
 					frm.add_custom_button(__('Pick List'),
@@ -148,11 +154,6 @@ frappe.ui.form.on('Material Request', {
 				}
 
 				frm.page.set_inner_btn_group_as_primary(__('Create'));
-
-				// stop
-				frm.add_custom_button(__('Stop'),
-					() => frm.events.update_status(frm, 'Stopped'));
-
 			}
 		}
 
@@ -198,9 +199,8 @@ frappe.ui.form.on('Material Request', {
 
 	get_item_data: function(frm, item, overwrite_warehouse=false) {
 		if (item && !item.item_code) { return; }
-		frm.call({
+		frappe.call({
 			method: "erpnext.stock.get_item_details.get_item_details",
-			child: item,
 			args: {
 				args: {
 					item_code: item.item_code,
@@ -218,7 +218,8 @@ frappe.ui.form.on('Material Request', {
 					plc_conversion_rate: 1,
 					rate: item.rate,
 					uom: item.uom,
-					conversion_factor: item.conversion_factor
+					conversion_factor: item.conversion_factor,
+					project: item.project,
 				},
 				overwrite_warehouse: overwrite_warehouse
 			},
@@ -472,13 +473,13 @@ erpnext.buying.MaterialRequestController = class MaterialRequestController exten
 		set_schedule_date(this.frm);
 	}
 
-	onload(doc, cdt, cdn) {
-		this.frm.set_query("item_code", "items", function() {
+	onload() {
+		this.frm.set_query("item_code", "items", function(doc, cdt, cdn) {
 			if (doc.material_request_type == "Customer Provided") {
 				return{
 					query: "erpnext.controllers.queries.item_query",
 					filters:{
-						'customer': me.frm.doc.customer,
+						'customer': doc.customer,
 						'is_stock_item':1
 					}
 				}

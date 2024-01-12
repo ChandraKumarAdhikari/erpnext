@@ -225,6 +225,7 @@ erpnext.PointOfSale.Controller = class {
 		voucher.pos_opening_entry = this.pos_opening;
 		voucher.period_end_date = frappe.datetime.now_datetime();
 		voucher.posting_date = frappe.datetime.now_date();
+		voucher.posting_time = frappe.datetime.now_time();
 		frappe.set_route('Form', 'POS Closing Entry', voucher.name);
 	}
 
@@ -547,6 +548,14 @@ erpnext.PointOfSale.Controller = class {
 				if (!item_code)
 					return;
 
+				if (rate == undefined || rate == 0) {
+					frappe.show_alert({
+						message: __('Price is not set for the item.'),
+						indicator: 'orange'
+					});
+					frappe.utils.play_sound("error");
+					return;
+				}
 				const new_item = { item_code, batch_no, rate, uom, [field]: value };
 
 				if (serial_no) {
@@ -559,8 +568,10 @@ erpnext.PointOfSale.Controller = class {
 
 				item_row = this.frm.add_child('items', new_item);
 
-				if (field === 'qty' && value !== 0 && !this.allow_negative_stock)
-					await this.check_stock_availability(item_row, value, this.frm.doc.set_warehouse);
+				if (field === 'qty' && value !== 0 && !this.allow_negative_stock) {
+					const qty_needed = value * item_row.conversion_factor;
+					await this.check_stock_availability(item_row, qty_needed, this.frm.doc.set_warehouse);
+				}
 
 				await this.trigger_new_item_events(item_row);
 
@@ -577,7 +588,7 @@ erpnext.PointOfSale.Controller = class {
 			console.log(error);
 		} finally {
 			frappe.dom.unfreeze();
-			return item_row;
+			return item_row; // eslint-disable-line no-unsafe-finally
 		}
 	}
 
@@ -598,12 +609,12 @@ erpnext.PointOfSale.Controller = class {
 			// if item is clicked twice from item selector
 			// then "item_code, batch_no, uom, rate" will help in getting the exact item
 			// to increase the qty by one
-			const has_batch_no = batch_no;
+			const has_batch_no = (batch_no !== 'null' && batch_no !== null);
 			item_row = this.frm.doc.items.find(
 				i => i.item_code === item_code
 					&& (!has_batch_no || (has_batch_no && i.batch_no === batch_no))
 					&& (i.uom === uom)
-					&& (i.rate == rate)
+					&& (i.rate === flt(rate))
 			);
 		}
 

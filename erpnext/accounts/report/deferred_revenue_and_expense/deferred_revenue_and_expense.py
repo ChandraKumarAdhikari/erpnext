@@ -4,9 +4,10 @@
 import frappe
 from frappe import _, qb
 from frappe.query_builder import Column, functions
-from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, rounded
+from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, getdate, rounded
 
 from erpnext.accounts.report.financial_statements import get_period_list
+from erpnext.accounts.utils import get_fiscal_year
 
 
 class Deferred_Item(object):
@@ -96,7 +97,7 @@ class Deferred_Item(object):
 		if base_amount + already_booked_amount > self.base_net_amount:
 			base_amount = self.base_net_amount - already_booked_amount
 
-		if not (get_first_day(start_date) == start_date and get_last_day(end_date) == end_date):
+		if get_first_day(start_date) != start_date or get_last_day(end_date) != end_date:
 			partial_month = flt(date_diff(end_date, start_date)) / flt(
 				date_diff(get_last_day(end_date), get_first_day(start_date))
 			)
@@ -226,7 +227,7 @@ class Deferred_Revenue_and_Expense_Report(object):
 
 		# If no filters are provided, get user defaults
 		if not filters:
-			fiscal_year = frappe.get_doc("Fiscal Year", frappe.defaults.get_user_default("fiscal_year"))
+			fiscal_year = frappe.get_doc("Fiscal Year", get_fiscal_year(date=getdate()))
 			self.filters = frappe._dict(
 				{
 					"company": frappe.defaults.get_user_default("Company"),

@@ -5,10 +5,22 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_days, add_months, flt, getdate, nowdate
 
+from erpnext.controllers.accounts_controller import InvalidQtyError
+
 test_dependencies = ["Product Bundle"]
 
 
 class TestQuotation(FrappeTestCase):
+	def test_quotation_qty(self):
+		qo = make_quotation(qty=0, do_not_save=True)
+		with self.assertRaises(InvalidQtyError):
+			qo.save()
+
+		# No error with qty=1
+		qo.items[0].qty = 1
+		qo.save()
+		self.assertEqual(qo.items[0].qty, 1)
+
 	def test_make_quotation_without_terms(self):
 		quotation = make_quotation(do_not_save=1)
 		self.assertFalse(quotation.get("payment_schedule"))
@@ -60,9 +72,9 @@ class TestQuotation(FrappeTestCase):
 		sales_order = make_sales_order(quotation.name)
 		sales_order.currency = "USD"
 		sales_order.conversion_rate = 20.0
-		sales_order.delivery_date = "2019-01-01"
 		sales_order.naming_series = "_T-Quotation-"
 		sales_order.transaction_date = nowdate()
+		sales_order.delivery_date = nowdate()
 		sales_order.insert()
 
 		self.assertEqual(sales_order.currency, "USD")
@@ -160,15 +172,6 @@ class TestQuotation(FrappeTestCase):
 		)
 
 		make_sales_order(quotation.name)
-
-	def test_shopping_cart_without_website_item(self):
-		if frappe.db.exists("Website Item", {"item_code": "_Test Item Home Desktop 100"}):
-			frappe.get_last_doc("Website Item", {"item_code": "_Test Item Home Desktop 100"}).delete()
-
-		quotation = frappe.copy_doc(test_records[0])
-		quotation.order_type = "Shopping Cart"
-		quotation.valid_till = getdate()
-		self.assertRaises(frappe.ValidationError, quotation.validate)
 
 	def test_create_quotation_with_margin(self):
 		from erpnext.selling.doctype.quotation.quotation import make_sales_order
@@ -638,13 +641,11 @@ def make_quotation(**args):
 			{
 				"item_code": args.item or args.item_code or "_Test Item",
 				"warehouse": args.warehouse,
-				"qty": args.qty or 10,
+				"qty": args.qty if args.qty is not None else 10,
 				"uom": args.uom or None,
 				"rate": args.rate or 100,
 			},
 		)
-
-	qo.delivery_date = add_days(qo.transaction_date, 10)
 
 	if not args.do_not_save:
 		qo.insert()
